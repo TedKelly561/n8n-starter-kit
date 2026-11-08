@@ -1,0 +1,248 @@
+{
+  "id": "KitShadowMode001",
+  "name": "Shadow Mode Example",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Shadow Mode pattern\n`SHADOW_MODE=true` in `.env` (the default): the workflow does all its thinking but only **logs** what it would do, to `/home/node/.n8n-files/shadow-log.jsonl`.\nCompare that log with what really happened for a week or two. When it matches, set `SHADOW_MODE=false`, run `docker compose up -d`, and log the change with `scripts/log-change.sh`.\nTest: `curl -X POST <url>/webhook/shadow-example -H 'content-type: application/json' -d '{\"customer\":\"Ann\",\"job\":\"Leak\"}'`",
+        "width": 640,
+        "height": 260
+      },
+      "id": "6d60bd8b-d6df-53b2-ae89-f228b56541f9",
+      "name": "Note sh-note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "shadow-example",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "dc427322-f451-504a-9276-a8e4bdc5d92c",
+      "name": "New work order (webhook)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "2a80ddf6-80f9-55df-b641-79e8c052ecaf"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Example: a new work order arrives. Decide what we WOULD do.\nconst order = $input.first().json.body || {};\nconst customer = order.customer || 'Example Customer';\nconst job = order.job || 'Boiler service';\nreturn [{ json: {\n  received_at: new Date().toISOString(),\n  execution_id: $execution.id,\n  work_order: order,\n  intended_action: 'send_confirmation_sms',\n  message: `Hi ${customer}, we have your request for \"${job}\". A technician will call you today.`,\n  shadow_mode: String($env.SHADOW_MODE ?? 'true').toLowerCase() !== 'false',\n} }];"
+      },
+      "id": "dfed635f-a277-5f2a-b533-fdf51263adec",
+      "name": "Decide action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "30319897-5063-5403-bc18-b33f6b59fb1b",
+              "leftValue": "={{ $json.shadow_mode }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "06947231-6182-565b-8e5d-001188bae07d",
+      "name": "SHADOW_MODE on?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Shadow mode: record what we would have done as one JSON line.\nconst line = JSON.stringify({ ...$input.first().json, mode: 'shadow' }) + '\\n';\nreturn [{ json: $input.first().json, binary: { data: {\n  data: Buffer.from(line).toString('base64'), mimeType: 'application/x-ndjson', fileName: 'shadow-log.jsonl' } } }];"
+      },
+      "id": "22c7e9c2-93fc-57e5-9a29-b465c60f1013",
+      "name": "Shadow: prepare log line",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "/home/node/.n8n-files/shadow-log.jsonl",
+        "dataPropertyName": "data",
+        "options": {
+          "append": true
+        }
+      },
+      "id": "29866191-8674-5fe8-b057-58b955416e50",
+      "name": "Shadow: append to shadow-log.jsonl",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ mode: 'shadow', would_have: $('Decide action').first().json.intended_action, message: $('Decide action').first().json.message }) }}",
+        "options": {}
+      },
+      "id": "cea6f7db-5aed-5fbc-9389-104fe26e0aeb",
+      "name": "Respond: shadow",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        -100
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "28fac66c-26c6-5130-ad1d-5cf103a0c824",
+      "name": "LIVE: do the real thing (replace me)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        680,
+        100
+      ],
+      "notes": "Replace with the real action (send SMS, update the job system). Only reached when SHADOW_MODE=false."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ mode: 'live', did: $json.intended_action }) }}",
+        "options": {}
+      },
+      "id": "b4cd425d-977e-573c-bcc1-41c7001d923d",
+      "name": "Respond: live",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        100
+      ]
+    }
+  ],
+  "connections": {
+    "New work order (webhook)": {
+      "main": [
+        [
+          {
+            "node": "Decide action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide action": {
+      "main": [
+        [
+          {
+            "node": "SHADOW_MODE on?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SHADOW_MODE on?": {
+      "main": [
+        [
+          {
+            "node": "Shadow: prepare log line",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "LIVE: do the real thing (replace me)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shadow: prepare log line": {
+      "main": [
+        [
+          {
+            "node": "Shadow: append to shadow-log.jsonl",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shadow: append to shadow-log.jsonl": {
+      "main": [
+        [
+          {
+            "node": "Respond: shadow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LIVE: do the real thing (replace me)": {
+      "main": [
+        [
+          {
+            "node": "Respond: live",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "KitErrorAlert001",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "kit": "n8n-starter-kit",
+    "note": "Bundled by n8n-starter-kit"
+  },
+  "versionId": "e6093a7c-d12d-5ddf-8297-0de79c10cafb"
+}

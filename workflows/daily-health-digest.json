@@ -1,0 +1,238 @@
+{
+  "id": "KitHealthDigest1",
+  "name": "Daily Health Digest",
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Daily Health Digest\nEvery morning at 07:05 (GENERIC_TIMEZONE): counts executions and failures in the last 24 h and sends **one** message, even when all is well, so silence itself is a warning.\nUses the read-only Postgres credential created by setup.sh (SELECT on two tables only).",
+        "width": 560,
+        "height": 220
+      },
+      "id": "fc19ccd0-e7eb-570d-9c21-8f5adb1fd331",
+      "name": "Note dg-note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        -280
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "5 7 * * *"
+            }
+          ]
+        }
+      },
+      "id": "ed008e0d-5070-505b-8192-34458be29d55",
+      "name": "Every morning 07:05",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "7dac2664-afee-5f3f-8a7e-65737e92895f",
+      "name": "Run on demand (CLI / other workflows)",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  (SELECT count(*) FROM execution_entity WHERE \"startedAt\" > now() - interval '24 hours')::int AS total,\n  (SELECT count(*) FROM execution_entity WHERE status IN ('error','crashed') AND \"startedAt\" > now() - interval '24 hours')::int AS failed,\n  COALESCE((\n    SELECT json_agg(t ORDER BY t.failures DESC) FROM (\n      SELECT w.name AS workflow, w.id AS workflow_id, count(*)::int AS failures, max(e.id)::text AS last_execution_id\n      FROM execution_entity e JOIN workflow_entity w ON w.id = e.\"workflowId\"\n      WHERE e.status IN ('error','crashed') AND e.\"startedAt\" > now() - interval '24 hours'\n      GROUP BY w.id, w.name ORDER BY failures DESC LIMIT 20\n    ) t), '[]'::json) AS by_workflow;",
+        "options": {}
+      },
+      "id": "7d77c992-3b95-517a-a309-7c77274fcaf8",
+      "name": "Failed executions, last 24 h",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "KitPgReadonly001",
+          "name": "Kit Postgres (read-only)"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// One morning message: what failed in the last 24 hours.\nconst r = $input.first().json || {};\nconst base = String($env.KIT_PUBLIC_URL || '').replace(/\\/$/, '');\nlet rows = r.by_workflow || [];\nif (typeof rows === 'string') rows = JSON.parse(rows);\nconst shadow = String($env.SHADOW_MODE ?? 'true').toLowerCase() !== 'false';\nconst head = `Good morning. n8n daily digest: ${r.total ?? 0} executions in the last 24 h, ${r.failed ?? 0} failed.`;\nconst body = rows.length === 0\n  ? ['Nothing failed. Nothing needs you today.']\n  : ['Needs a look:', ...rows.map(x => `- ${x.workflow}: ${x.failures} failed (latest: ${base}/workflow/${x.workflow_id}/executions/${x.last_execution_id})`)];\nconst foot = `Shadow mode is ${shadow ? 'ON (workflows only log what they would do)' : 'OFF (live)'}.`;\nreturn [{ json: { text: [head, ...body, foot].join('\\n'), failed: r.failed ?? 0, hasChannel: Boolean($env.ALERT_WEBHOOK_URL) } }];"
+      },
+      "id": "39031f2c-bfcb-519f-adbb-549e78b3c01c",
+      "name": "Build digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "507d65ff-2f72-50bd-819c-b7d7db0d77bd",
+              "leftValue": "={{ $json.hasChannel }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ea32b513-ffbb-5bf7-b2d3-379535ef189c",
+      "name": "Alert channel set?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ALERT_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.text, content: $json.text }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "4e295fc2-b478-572c-9f3a-77b285f771da",
+      "name": "Send digest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        -100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "errorMessage": "ALERT_WEBHOOK_URL is not set, so this message could not reach a person. Set it in .env and run: docker compose up -d"
+      },
+      "id": "7679103a-03a5-5192-bcf2-abc8c8b079a3",
+      "name": "No alert channel: fail loudly",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        880,
+        100
+      ]
+    }
+  ],
+  "connections": {
+    "Every morning 07:05": {
+      "main": [
+        [
+          {
+            "node": "Failed executions, last 24 h",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run on demand (CLI / other workflows)": {
+      "main": [
+        [
+          {
+            "node": "Failed executions, last 24 h",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Failed executions, last 24 h": {
+      "main": [
+        [
+          {
+            "node": "Build digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build digest": {
+      "main": [
+        [
+          {
+            "node": "Alert channel set?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert channel set?": {
+      "main": [
+        [
+          {
+            "node": "Send digest",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No alert channel: fail loudly",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "KitErrorAlert001",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "kit": "n8n-starter-kit",
+    "note": "Bundled by n8n-starter-kit"
+  },
+  "versionId": "ebebe92f-7bf0-5016-9126-bd29fc171ca1"
+}

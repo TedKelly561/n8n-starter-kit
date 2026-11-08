@@ -1,0 +1,46 @@
+# Caddy is the only public entry point.
+# CADDY_SITE_ADDRESS is set by ./setup.sh:
+#   production: n8n.example.com              -> automatic HTTPS (Let's Encrypt)
+#   local mode: :80                         -> plain HTTP, any hostname, for testing
+{
+	email {$ACME_EMAIL}
+}
+
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		Cross-Origin-Opener-Policy "same-origin"
+		-Server
+		-X-Powered-By
+	}
+}
+
+{$CADDY_SITE_ADDRESS} {
+	import security_headers
+	encode zstd gzip
+
+	# Prometheus metrics are for the server only, never the internet.
+	@metrics path /metrics /metrics/*
+	respond @metrics 404
+
+	reverse_proxy n8n:5678 {
+		# Long-running webhook calls and the editor's push connection.
+		flush_interval -1
+		transport http {
+			read_timeout 300s
+		}
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
+
+# Optional extra sites (for example the Uptime Kuma status subdomain).
+# ./setup.sh --monitoring writes them here.
+import /etc/caddy/conf.d/*.caddy

@@ -1,0 +1,191 @@
+# n8n starter kit: n8n + Postgres + Caddy (+ optional Uptime Kuma)
+#
+# All settings come from .env (created by ./setup.sh from .env.example).
+# Versions are pinned on purpose. To change the n8n version, use
+#   ./scripts/update.sh <tag>
+# which backs up first and rolls back automatically if the new version is unhealthy.
+
+name: ${COMPOSE_PROJECT_NAME:-n8nkit}
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  postgres:
+    image: postgres:${POSTGRES_VERSION:-16.15-alpine}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-n8n}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run ./setup.sh to generate .env}
+      POSTGRES_DB: ${POSTGRES_DB:-n8n}
+      TZ: ${GENERIC_TIMEZONE:-UTC}
+    # Modest settings for a 2 GB VPS.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - max_connections=50
+      - -c
+      - work_mem=8MB
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [backend]
+    # No "ports:" on purpose: Postgres is never reachable from outside Docker.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 384m
+    logging: *default-logging
+
+  # One-shot: make the file-exchange volume writable by n8n (uid 1000).
+  # Runs on every "up", takes a second, then exits.
+  n8n-files-init:
+    image: n8nio/n8n:${N8N_VERSION:?set N8N_VERSION in .env}
+    user: root
+    entrypoint: ["chown", "-R", "1000:1000", "/home/node/.n8n-files"]
+    restart: "no"
+    volumes:
+      - n8n_files:/home/node/.n8n-files
+    network_mode: none
+    logging: *default-logging
+
+  n8n:
+    image: n8nio/n8n:${N8N_VERSION:?set N8N_VERSION in .env}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      n8n-files-init:
+        condition: service_completed_successfully
+    environment:
+      # Database
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-n8n}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-n8n}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      # Keep this key safe. Without it, credentials in backups cannot be decrypted.
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?run ./setup.sh to generate .env}
+      # Public address
+      N8N_HOST: ${DOMAIN}
+      N8N_PORT: 5678
+      # IPv4 inside Docker (the default "::" fails on hosts without IPv6).
+      N8N_LISTEN_ADDRESS: 0.0.0.0
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-https}
+      WEBHOOK_URL: ${PUBLIC_URL}/
+      N8N_EDITOR_BASE_URL: ${PUBLIC_URL}/
+      N8N_PROXY_HOPS: 1
+      N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE:-true}
+      # Time
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-UTC}
+      TZ: ${GENERIC_TIMEZONE:-UTC}
+      # Operations
+      N8N_METRICS: "true"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      # Nodes that read/write files may only touch this folder.
+      N8N_RESTRICT_FILE_ACCESS_TO: /home/node/.n8n-files
+      N8N_RUNNERS_ENABLED: "true"
+      N8N_LOG_LEVEL: ${N8N_LOG_LEVEL:-info}
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: ${EXECUTIONS_DATA_MAX_AGE:-336}
+      EXECUTIONS_DATA_PRUNE_MAX_COUNT: ${EXECUTIONS_DATA_PRUNE_MAX_COUNT:-20000}
+      # Safety method: workflows read these with $env.NAME
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      SHADOW_MODE: ${SHADOW_MODE:-true}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      KIT_PUBLIC_URL: ${PUBLIC_URL}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      # Default folder n8n may read/write files in (shadow-mode log lives here).
+      - n8n_files:/home/node/.n8n-files
+    networks: [backend, web]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:5678/healthz/readiness || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    logging: *default-logging
+
+  caddy:
+    image: caddy:${CADDY_VERSION:-2.11.9-alpine}
+    restart: unless-stopped
+    depends_on:
+      - n8n
+    ports:
+      - "${BIND_ADDRESS:-0.0.0.0}:${HTTP_PORT:-80}:80"
+      - "${BIND_ADDRESS:-0.0.0.0}:${HTTPS_PORT:-443}:443"
+      - "${BIND_ADDRESS:-0.0.0.0}:${HTTPS_PORT:-443}:443/udp"
+    environment:
+      CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS:?run ./setup.sh to generate .env}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@example.com}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/conf.d:/etc/caddy/conf.d:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [web]
+    healthcheck:
+      # Admin API listens on localhost inside the container only.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:2019/config/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+    logging: *default-logging
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:${UPTIME_KUMA_VERSION:-2.5.9-slim}
+    profiles: [monitoring]
+    restart: unless-stopped
+    environment:
+      TZ: ${GENERIC_TIMEZONE:-UTC}
+    volumes:
+      - kuma_data:/app/data
+    networks: [web]
+    healthcheck:
+      test: ["CMD-SHELL", "extra/healthcheck"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    logging: *default-logging
+
+networks:
+  # Postgres lives only here. "internal" means no route in or out of Docker.
+  backend:
+    internal: true
+  web: {}
+
+volumes:
+  pgdata:
+  n8n_data:
+  n8n_files:
+  caddy_data:
+  caddy_config:
+  kuma_data:

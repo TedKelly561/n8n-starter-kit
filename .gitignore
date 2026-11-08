@@ -1,0 +1,10 @@
+# Secrets and per-server state: never commit
+.env
+.env.*
+!.env.example
+ops-log.md
+data/
+caddy/conf.d/*.caddy
+*.age
+*.gpg
+*.sql.gz
