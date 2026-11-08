@@ -227,7 +227,7 @@ else
   info "existing backup found: $(latest_backup)"
 fi
 
-if [ "$NEW_ENV" = 1 ]; then ops_log install OK "n8n $N8N_VERSION installed (local=$LOCAL_MODE)"
+if [ "$NEW_ENV" = 1 ] || [ "$KEY_IS_NEW" = 1 ]; then ops_log install OK "n8n $N8N_VERSION installed (local=$LOCAL_MODE)"
 else ops_log setup INFO "setup.sh re-run (n8n $N8N_VERSION)"; fi
 
 # ================================================================ 8. next steps
@@ -237,7 +237,7 @@ if [ "$KEY_IS_NEW" = 1 ]; then
  ##########################################################################
  #  SAVE YOUR N8N_ENCRYPTION_KEY IN A PASSWORD MANAGER NOW.               #
  #                                                                        #
- #  It encrypts every credential n8n stores. Without it, credential      #
+ #  It encrypts every credential n8n stores. Without it, credential       #
  #  backups are useless and every API key must be re-entered by hand.     #
  #  See it with:   grep N8N_ENCRYPTION_KEY .env                           #
  ##########################################################################

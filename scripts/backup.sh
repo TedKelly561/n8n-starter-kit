@@ -43,7 +43,7 @@ info "Backup to $DEST"
 
 # ---------------------------------------------------------------- 1. database
 FAILED_STEP="pg_dump"
-[ "$(service_health postgres)" = "healthy" ] || { false; }
+[ "$(service_health postgres)" = "healthy" ] || { err "postgres is not healthy"; false; }
 dc exec -T postgres pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --no-privileges \
   | gzip -6 > "$DEST/db.sql.gz"
 gzip -t "$DEST/db.sql.gz"
