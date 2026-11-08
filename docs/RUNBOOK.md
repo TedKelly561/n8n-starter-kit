@@ -110,8 +110,11 @@ is up: `crontab -l` (is the kit block there?), `systemctl status cron`, `docker 
 
 ## Moving Postgres to a new major version
 
+The kit ships on Postgres 17. Use this for an older install still on 16, or for 17 -> 18 later.
+The restore drill always uses `POSTGRES_VERSION`, so run it after the move.
+
 1. `./scripts/backup.sh` and note the folder.
 2. `docker compose stop n8n postgres && docker compose rm -f postgres`
 3. `docker volume rm n8nkit_pgdata` (only after step 1 succeeded and the drill passed).
 4. Set `POSTGRES_VERSION` in `.env` to the new pinned tag; `docker compose up -d postgres`.
-5. `./scripts/restore.sh <folder> --skip-safety-backup`, then `./scripts/log-change.sh "Postgres 16 -> 17"`.
+5. `./scripts/restore.sh <folder> --skip-safety-backup`, then `./scripts/log-change.sh "Postgres 16 -> 17"`, then `./scripts/restore-drill.sh`.

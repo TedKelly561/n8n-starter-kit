@@ -4,7 +4,11 @@
 **Where:** a Linux container (16 GB RAM) with Docker Engine 29.9.2 and Docker Compose v5.6.1,
 local mode (`./setup.sh --local --yes`, plain HTTP on 127.0.0.1:80).
 **Images:** `n8nio/n8n:2.46.6` (also `2.46.5` and `2.47.2` for update tests),
-`postgres:16.15-alpine`, `caddy:2.11.9-alpine`, `louislam/uptime-kuma:2.5.9-slim`.
+`postgres:17.11-alpine` (the shipped pin), `caddy:2.11.9-alpine`, `louislam/uptime-kuma:2.5.9-slim`.
+
+The full suite below (tests 1-28) first ran on `postgres:16.15-alpine`. The kit then
+moved to `postgres:17.11-alpine`, because n8n 2.46 says 16 is outside its supported
+range, and the core path ran again from scratch on 17 (see "Re-run on Postgres 17").
 
 Alerts and heartbeats went to a small local webhook catcher container on the kit's
 `web` network, used as `ALERT_WEBHOOK_URL`, `HEARTBEAT_URL` and `HEALTH_HEARTBEAT_URL`.
@@ -40,7 +44,7 @@ Alerts and heartbeats went to a small local webhook catcher container on the kit
 | 13 | `.env` archive skipped | neither set | pass: skipped with a warning |
 | 14 | Retention | 70 synthetic daily backups + a partial + a tagged one, then `backup.sh` | pass: 14 daily + 8 weekly kept (20 folders), partial older than 1 day removed, newest kept, tagged safety backup kept |
 | 15 | Backup failure | postgres stopped, `backup.sh` | pass: exit 1, folder marked `.failed`, alert names the step and the kept good backup, heartbeat `/fail` |
-| 16 | Restore drill | `./scripts/restore-drill.sh` | pass: throwaway `postgres:16.15-alpine` with no network; 173 tables, all row counts match; workflows 4/4, credentials 1/1; container removed |
+| 16 | Restore drill | `./scripts/restore-drill.sh` | pass: throwaway Postgres (same `POSTGRES_VERSION` as production) with no network; 173 tables, all row counts match; workflows 4/4, credentials 1/1; container removed |
 | 17 | Restore drill catches a bad backup | drill on a copy with a wrong count | pass: FAILED, alert sent |
 | 18 | Workflow history | `./scripts/export-workflows.sh` twice | pass: first run commits, second run "No workflow changes. Nothing committed." |
 | 19 | Update, same tag | `./scripts/update.sh 2.46.6 --yes` | pass: backup, health, version and API check, `OK` in `ops-log.md` |
@@ -55,6 +59,19 @@ Alerts and heartbeats went to a small local webhook catcher container on the kit
 | 28 | Cron lines | each line of the generated block run under `env -i PATH=/usr/bin:/bin sh -c` | pass |
 
 Idle memory on the test host: n8n about 380 MB, Postgres about 25 MB, Caddy about 12 MB.
+
+## Re-run on Postgres 17.11 (2026-11-08, from scratch after `docker compose down -v`)
+
+| Step | Command | Result |
+|---|---|---|
+| Install | `./setup.sh --local --yes` | pass: postgres 17.11, n8n 2.46.6 and caddy all healthy; `server_version` 17.11 |
+| Postgres warning gone | `docker compose logs n8n \| grep -c "outside the supported range"` | pass: 0 (it was logged on every start with 16.15) |
+| Bundled workflows | setup | pass: 3 imported; Error Alert and Daily Health Digest published, Shadow Mode Example unpublished |
+| Backup | `./scripts/backup.sh` | pass: dump, 3 workflows, 1 encrypted credential; manifest records `postgres_version=17.11-alpine` |
+| Restore drill | `./scripts/restore-drill.sh` | pass: throwaway `postgres:17.11-alpine`, 173 tables match, workflows 3/3, credentials 1/1 |
+| Restore | renamed a workflow, then `./scripts/restore.sh <that backup> --yes` | pass: rename reverted, 3/3 workflows, published state kept |
+| Update, same tag | `./scripts/update.sh 2.46.6 --yes` | pass: first refused (the restore was today's change), then `--force "retest after Postgres 17 switch"` gave `OK`, healthy, API OK |
+| Health alert | `docker compose stop n8n`, `healthcheck.sh` twice, start, `healthcheck.sh` | pass: one PROBLEM per problem (container, proxy), nothing on the second run, RESOLVED after start; heartbeat `/fail` then ok |
 
 ## Not tested here (and why)
 
@@ -76,9 +93,10 @@ Idle memory on the test host: n8n about 380 MB, Postgres about 25 MB, Caddy abou
 
 ## Things noticed while testing
 
-- n8n 2.46 logs "Postgres 16 is outside the supported range and receives compatibility
-  support only. Upgrade to Postgres 17 or newer." Everything worked on 16.15; the
-  runbook has the steps to move to 17.
+- On Postgres 16.15, n8n 2.46 logged "Postgres 16 is outside the supported range and
+  receives compatibility support only. Upgrade to Postgres 17 or newer." on every start.
+  The kit now ships 17.11 and the warning is gone. The runbook covers moving an existing
+  16 install with a dump and restore. That procedure itself was not run here.
 - n8n listens on `::` by default and crash-loops on hosts without IPv6. The kit sets
   `N8N_LISTEN_ADDRESS=0.0.0.0`.
 - n8n only runs a *published* error workflow, so setup publishes Error Alert.

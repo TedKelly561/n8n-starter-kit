@@ -209,7 +209,7 @@ ops-log.md                (created, gitignored) one line per change
 | Image | Tag | Set in `.env` as |
 |---|---|---|
 | n8nio/n8n | `2.46.6` | `N8N_VERSION` |
-| postgres | `16.15-alpine` | `POSTGRES_VERSION` |
+| postgres | `17.11-alpine` | `POSTGRES_VERSION` |
 | caddy | `2.11.9-alpine` | `CADDY_VERSION` |
 | louislam/uptime-kuma | `2.5.9-slim` | `UPTIME_KUMA_VERSION` |
 
@@ -268,10 +268,10 @@ can include an encrypted `.env`.
 **Why is n8n not on the `latest` tag?** Because "latest" changes under you. Updates are
 deliberate: `./scripts/update.sh <tag>`, one a day, with a backup and rollback.
 
-**Why Postgres 16?** The kit pins `16.15-alpine`. n8n 2.46 still works with it but logs
-that Postgres 16 gets only compatibility support and recommends 17+. To move to 17:
-take a backup, set `POSTGRES_VERSION=17-alpine` (pin a full tag), remove the `pgdata`
-volume and restore the backup (see the runbook). Do it as that day's one change.
+**Which Postgres?** The kit pins `postgres:17.11-alpine`, inside the range n8n 2.46
+supports. Major Postgres versions cannot read each other's data folders, so a major
+upgrade (for example an older install on 16) is a dump and restore: see "Moving Postgres
+to a new major version" in the runbook. Treat it as that day's one change.
 
 **Restore re-imports workflows?** By default `restore.sh` restores the database dump,
 which already contains workflows and credentials with their published state. Importing

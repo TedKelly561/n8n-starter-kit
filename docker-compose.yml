@@ -15,7 +15,7 @@ x-logging: &default-logging
 
 services:
   postgres:
-    image: postgres:${POSTGRES_VERSION:-16.15-alpine}
+    image: postgres:${POSTGRES_VERSION:-17.11-alpine}
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-n8n}
